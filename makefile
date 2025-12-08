@@ -34,7 +34,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 # Run with mpiexec
 run: $(TARGET)
-	$(MPIEXEC) -n $(NP) ./$(TARGET) -i ./inputs/nb-10.txt
+	$(MPIEXEC) -n $(NP) ./$(TARGET) -i ./inputs/nb-10000.txt -s 1
 
 clean:
 	rm -rf $(OBJ_DIR) $(TARGET)

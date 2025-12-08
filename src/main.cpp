@@ -14,10 +14,12 @@
 #include <GL/glu.h>
 #include <GL/glut.h>
 
+#include <chrono>
+
 const double G = 0.0001;
 const double rlimit = 0.03;
 const double dt = 0.01;
-const double theta = 0.05;
+const double theta = 0.7;
 
 const int MAX_X = 4;
 const int MAX_Y = 4;
@@ -292,10 +294,6 @@ void insertNode(Node *node, Particle *particle)
   // if there was a particle and we are trying to insert, we must subdivide and reinsert
   if (node->particle != nullptr)
   {
-    node->lower_left = new Node{node->x_min, vert_line, node->y_min, horz_line};
-    node->lower_right = new Node{vert_line, node->x_max, node->y_min, horz_line};
-    node->upper_left = new Node{node->x_min, vert_line, horz_line, node->y_max};
-    node->upper_right = new Node{vert_line, node->x_max, horz_line, node->y_max};
     Particle *existing = node->particle;
     node->particle = nullptr;
 
@@ -438,27 +436,50 @@ void calculateCenters(Node *node)
     }
   }
 }
-
 void computeNaive(std::vector<Particle> &particles)
 {
-
   std::vector<Particle> next_particles = particles;
 
-  for (int i = 0; i < particles.size(); i++)
+  for (int i = 0; i < (int)particles.size(); i++)
   {
     const Particle &current_particle = particles[i];
-    double total_x_f = 0;
-    double total_y_f = 0;
 
-    for (int j = 0; j < particles.size(); j++)
+    // If this particle is already dead, skip
+    if (current_particle.mass < 0)
+      continue;
+
+    // If it’s out of bounds, mark dead in *next_particles* and skip forces
+    if (current_particle.x < 0 || current_particle.x > MAX_X ||
+        current_particle.y < 0 || current_particle.y > MAX_Y)
     {
+      next_particles[i].mass = -1;
+      continue;
+    }
+
+    double total_x_f = 0.0;
+    double total_y_f = 0.0;
+
+    for (int j = 0; j < (int)particles.size(); j++)
+    {
+      const Particle &other = particles[j];
+
+      // Skip dead ones immediately
+      if (other.mass < 0)
+        continue;
+
+      // If other is out of bounds, mark it dead in *next_particles*
+      if (other.x < 0 || other.x > MAX_X ||
+          other.y < 0 || other.y > MAX_Y)
+      {
+        next_particles[j].mass = -1;
+        continue;
+      }
+
       if (i == j)
         continue;
 
-      // calculate the total force from every partical, then figure out acceleration
-
-      double force_x = calcForceX(current_particle, particles[j]);
-      double force_y = calcForceY(current_particle, particles[j]);
+      double force_x = calcForceX(current_particle, other);
+      double force_y = calcForceY(current_particle, other);
       total_x_f += force_x;
       total_y_f += force_y;
     }
@@ -466,8 +487,9 @@ void computeNaive(std::vector<Particle> &particles)
     double acc_x = total_x_f / current_particle.mass;
     double acc_y = total_y_f / current_particle.mass;
 
-    double new_pos_x = current_particle.x + (current_particle.vx * dt) + (0.5 * acc_x * pow(dt, 2));
-    double new_pos_y = current_particle.y + (current_particle.vy * dt) + (0.5 * acc_y * pow(dt, 2));
+    double dt2 = dt * dt;
+    double new_pos_x = current_particle.x + current_particle.vx * dt + 0.5 * acc_x * dt2;
+    double new_pos_y = current_particle.y + current_particle.vy * dt + 0.5 * acc_y * dt2;
 
     double new_vx = current_particle.vx + acc_x * dt;
     double new_vy = current_particle.vy + acc_y * dt;
@@ -481,53 +503,65 @@ void computeNaive(std::vector<Particle> &particles)
   particles = next_particles;
 }
 
-void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y_f)
+static inline void addForce(
+    double dx,
+    double dy,
+    double m1,
+    double m2,
+    double *fx,
+    double *fy)
 {
+  double r2 = dx * dx + dy * dy;
+  double r = sqrt(r2);               // Calculate actual distance
+  double dist = std::max(rlimit, r); // Compare distance to distance
+  double inv_r3 = 1.0 / (dist * dist * dist);
 
-  // if we got to a particle, lets just add
+  double F = G * m1 * m2 * inv_r3; // Don't forget the negative sign!
+
+  *fx += F * dx;
+  *fy += F * dy;
+}
+
+void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y_f, double theta2)
+{
+  if (n->total_mass < 0.0)
+    return;
+
   if (n->particle)
   {
+    if (n->particle->index == p->index)
+      return;
+    if (n->particle->mass < 0)
+      return;
 
-    double force_x = calcForceX(p, n->particle);
-    double force_y = calcForceY(p, n->particle);
-
-    *total_x_f += force_x;
-    *total_y_f += force_y;
-
+    double dx = n->particle->x - p->x;
+    double dy = n->particle->y - p->y;
+    addForce(dx, dy, p->mass, n->particle->mass, total_x_f, total_y_f);
     return;
   }
 
+  double dx = n->center_x - p->x;
+  double dy = n->center_y - p->y;
+  double r2 = dx * dx + dy * dy;
   double l = n->x_max - n->x_min;
-  double d = distanceP2N(p, n);
 
-  if ((l / d) < theta)
+  if (r2 > 0.0 && (l * l) < theta2 * r2)
   {
+    addForce(dx, dy, p->mass, n->total_mass, total_x_f, total_y_f);
+    return;
+  }
 
-    double force_x = calcForceX(p, n);
-    double force_y = calcForceY(p, n);
-    *total_x_f += force_x;
-    *total_y_f += force_y;
-  }
-  else
-  {
-    if (n->lower_left)
-    {
-      calculateNodeForce(p, n->lower_left, total_x_f, total_y_f);
-    }
-    if (n->lower_right)
-    {
-      calculateNodeForce(p, n->lower_right, total_x_f, total_y_f);
-    }
-    if (n->upper_left)
-    {
-      calculateNodeForce(p, n->upper_left, total_x_f, total_y_f);
-    }
-    if (n->upper_right)
-    {
-      calculateNodeForce(p, n->upper_right, total_x_f, total_y_f);
-    }
-  }
+  // Pass theta2 down the recursion
+  if (n->lower_left)
+    calculateNodeForce(p, n->lower_left, total_x_f, total_y_f, theta2);
+  if (n->lower_right)
+    calculateNodeForce(p, n->lower_right, total_x_f, total_y_f, theta2);
+  if (n->upper_left)
+    calculateNodeForce(p, n->upper_left, total_x_f, total_y_f, theta2);
+  if (n->upper_right)
+    calculateNodeForce(p, n->upper_right, total_x_f, total_y_f, theta2);
 }
+
 
 void computeBarnesHunt(std::vector<Particle> &particles)
 {
@@ -543,7 +577,7 @@ void computeBarnesHunt(std::vector<Particle> &particles)
   {
     if (particles[i].x < 0 || particles[i].x > MAX_X || particles[i].y < 0 || particles[i].y > MAX_Y)
     {
-      particles[i].mass = 0;
+      particles[i].mass = -1;
       continue;
     }
     insertNode(root, &particles[i]);
@@ -556,7 +590,11 @@ void computeBarnesHunt(std::vector<Particle> &particles)
   std::vector<Particle> next_particles = particles;
 
   // caclulate for force for every particle based on tree nodes
-  for (int i = 0; i < particles.size(); i++)
+  const std::size_t n = particles.size();
+  const double dt2 = dt * dt;
+  const double half_dt2 = 0.5 * dt2;
+  const double theta2 = theta * theta;
+  for (int i = 0; i < n; i++)
   {
     if (particles[i].x < 0 || particles[i].x > MAX_X || particles[i].y < 0 || particles[i].y > MAX_Y)
     {
@@ -567,13 +605,12 @@ void computeBarnesHunt(std::vector<Particle> &particles)
     double force_x = 0;
     double force_y = 0;
 
-    calculateNodeForce(&particles[i], root, &force_x, &force_y);
-
+    calculateNodeForce(&particles[i], root, &force_x, &force_y, theta2);
     double acc_x = force_x / current_particle.mass;
     double acc_y = force_y / current_particle.mass;
 
-    double new_pos_x = current_particle.x + (current_particle.vx * dt) + (0.5 * acc_x * pow(dt, 2));
-    double new_pos_y = current_particle.y + (current_particle.vy * dt) + (0.5 * acc_y * pow(dt, 2));
+    double new_pos_x = current_particle.x + (current_particle.vx * dt) + (acc_x * half_dt2);
+    double new_pos_y = current_particle.y + (current_particle.vy * dt) + (acc_y * half_dt2);
 
     double new_vx = current_particle.vx + acc_x * dt;
     double new_vy = current_particle.vy + acc_y * dt;
@@ -583,49 +620,47 @@ void computeBarnesHunt(std::vector<Particle> &particles)
     next_particles[i].vx = new_vx;
     next_particles[i].vy = new_vy;
   }
+
   particles = next_particles;
 }
 
 int main(int argc, char **argv)
 {
-
-  /* OpenGL window dims */
-  int width = 600, height = 600;
-  GLFWwindow *window;
-  if (!glfwInit())
-  {
-    fprintf(stderr, "Failed to initialize GLFW\n");
-    return -1;
-  }
-  // Open a window and create its OpenGL context
-  window = glfwCreateWindow(width, height, "Simulation", NULL, NULL);
-  if (window == NULL)
-  {
-    fprintf(stderr, "Failed to open GLFW window.\n");
-    glfwTerminate();
-    return -1;
-  }
-  glfwMakeContextCurrent(window); // Initialize GLEW
-  if (glewInit() != GLEW_OK)
-  {
-    fprintf(stderr, "Failed to initialize GLEW\n");
-    return -1;
-  }
-  // Ensure we can capture the escape key being pressed below
-  glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
-
   struct options_t opts;
   get_opts(argc, argv, &opts);
+  GLFWwindow *window;
+
+  if (opts.visualization)
+  {
+    /* OpenGL window dims */
+    int width = 600, height = 600;
+    if (!glfwInit())
+    {
+      fprintf(stderr, "Failed to initialize GLFW\n");
+      return -1;
+    }
+    // Open a window and create its OpenGL context
+    window = glfwCreateWindow(width, height, "Simulation", NULL, NULL);
+    if (window == NULL)
+    {
+      fprintf(stderr, "Failed to open GLFW window.\n");
+      glfwTerminate();
+      return -1;
+    }
+    glfwMakeContextCurrent(window); // Initialize GLEW
+    if (glewInit() != GLEW_OK)
+    {
+      fprintf(stderr, "Failed to initialize GLEW\n");
+      return -1;
+    }
+    // Ensure we can capture the escape key being pressed below
+    glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
+  }
 
   std::vector<Particle> particles;
   if (read_file(&opts, particles) != 0)
   {
     std::cerr << "Failed to read file\n";
-  }
-  for (int i = 0; i < particles.size(); i++)
-  {
-    std::cout << "p" << i << ": x=" << particles[i].x
-              << ", y=" << particles[i].y << "\n";
   }
 
   // Initialize the MPI environment. The two arguments to MPI Init are not
@@ -655,38 +690,54 @@ int main(int argc, char **argv)
   // testing most basic n * n implementation
 
   // lets do for 100 time steps
-  for (int t = 0; t < 1000000; t++)
+  auto total_start = std::chrono::high_resolution_clock::now();
+
+  for (int t = 0; t < opts.steps; t++)
   {
-
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // drawOctreeBounds2D(node);
-    for (int p = 0; p < particles.size(); p++)
+    if (opts.visualization)
     {
-      if (particles[p].mass == 0)
-        continue;
-        
-      double x_window = 2 * particles[p].x / MAX_X - 1;
-      double y_window = 2 * particles[p].y / MAX_Y - 1;
+      glClear(GL_COLOR_BUFFER_BIT);
 
-      float colors[3] = {0.01f, 0.5f, 0.99f};
-      drawParticle2D(x_window, y_window, 0.03, colors);
+      for (int p = 0; p < particles.size(); p++)
+      {
+        if (particles[p].mass < 0)
+          continue;
+
+        double x_window = 2 * particles[p].x / MAX_X - 1;
+        double y_window = 2 * particles[p].y / MAX_Y - 1;
+
+        float colors[3] = {0.01f, 0.5f, 0.99f};
+        drawParticle2D(x_window, y_window, 0.01, colors);
+      }
+
+      glfwSwapBuffers(window);
+      glfwPollEvents();
     }
 
-    // Swap buffers
-    glfwSwapBuffers(window);
-    glfwPollEvents();
-
     computeBarnesHunt(particles);
+    // computeNaive(particles);
   }
 
-  std::cout << "final post\n";
+  auto total_end = std::chrono::high_resolution_clock::now();
 
-  for (int i = 0; i < particles.size(); i++)
-  {
-    std::cout << "p" << i << ": x=" << particles[i].x
-              << ", y=" << particles[i].y << "\n";
-  }
+  // Convert to milliseconds
+  double total_ms =
+      std::chrono::duration<double, std::milli>(total_end - total_start).count();
+
+  double avg_ms = total_ms / opts.steps;
+  double fps = 1000.0 / avg_ms;
+
+  std::cout << "Total time: " << total_ms << " ms\n";
+  std::cout << "Average per step: " << avg_ms << " ms\n";
+  std::cout << "FPS (sim speed): " << fps << "\n";
+
+  // std::cout << "final post\n";
+
+  // for (int i = 0; i < particles.size(); i++)
+  // {
+  //   std::cout << "p" << i << ": x=" << particles[i].x
+  //             << ", y=" << particles[i].y << "\n";
+  // }
 
   MPI_Finalize();
 }
