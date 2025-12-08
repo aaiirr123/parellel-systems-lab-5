@@ -1,9 +1,0 @@
-
-main:110708 terminated with signal 11 at PC=5cf9b9b3d194 SP=7ffc3d0d8ea0.  Backtrace:
-./main(+0x4194)[0x5cf9b9b3d194]
-./main(+0x4126)[0x5cf9b9b3d126]
-./main(+0x4880)[0x5cf9b9b3d880]
-./main(+0x2b3d)[0x5cf9b9b3bb3d]
-/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x752e3c429d90]
-/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x752e3c429e40]
-./main(+0x2d45)[0x5cf9b9b3bd45]
