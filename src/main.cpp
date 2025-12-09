@@ -8,18 +8,14 @@
 #include <vector>
 #include <cmath>
 
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
-#include <GL/glu.h>
-#include <GL/glut.h>
-
-#include <chrono>
+// #include <GL/glew.h>
+// #include <GLFW/glfw3.h>
+// #include <glm/glm.hpp>
+// #include <GL/glu.h>
+// #include <GL/glut.h>
 
 const double G = 0.0001;
 const double rlimit = 0.03;
-const double dt = 0.01;
-const double theta = 0.7;
 
 const int MAX_X = 4;
 const int MAX_Y = 4;
@@ -48,15 +44,13 @@ void get_opts(int argc, char **argv, options_t *opts)
     std::exit(0);
   }
 
-  // Set some sane defaults (optional)
   opts->in_file = nullptr;
   opts->out_file = nullptr;
-  opts->steps = 0;
-  opts->theta = 0.0;
-  opts->timestep = 0.0;
+  opts->steps = 100;
+  opts->theta = 0.7;
+  opts->timestep = 0.01;
   opts->visualization = false;
 
-  // Long options table
   static struct option l_opts[] = {
       {"in", required_argument, nullptr, 'i'},
       {"out", required_argument, nullptr, 'o'},
@@ -68,8 +62,7 @@ void get_opts(int argc, char **argv, options_t *opts)
   };
 
   int opt, ind;
-  // Short options: each option that expects an argument gets a ':' after it
-  // i:o:s:t:d:v:
+
   while ((opt = getopt_long(argc, argv, "i:o:s:t:d:v:", l_opts, &ind)) != -1)
   {
     switch (opt)
@@ -99,9 +92,8 @@ void get_opts(int argc, char **argv, options_t *opts)
       break;
 
     case '?':
-      // Unknown option or missing argument.
-      // getopt_long already printed an error message.
-      std::cerr << "Use --help or run with no args to see usage.\n";
+
+      std::cerr << "unkown arg\n";
       std::exit(1);
 
     default:
@@ -144,6 +136,30 @@ struct Node
   {
   }
 };
+void write_file(const char *filename, const std::vector<Particle> &particles)
+{
+  std::ofstream outfile(filename);
+  if (!outfile)
+  {
+    std::cerr << "Error: could not open output file " << filename << "\n";
+    return;
+  }
+
+  // Optionally write number of particles
+  outfile << particles.size() << "\n";
+
+  for (const auto &p : particles)
+  {
+    outfile << p.index << " "
+            << p.x << " "
+            << p.y << " "
+            << p.mass << " "
+            << p.vx << " "
+            << p.vy << "\n";
+  }
+
+  outfile.close();
+}
 
 int read_file(struct options_t *args,
               std::vector<Particle> &particles)
@@ -158,7 +174,6 @@ int read_file(struct options_t *args,
   int n;
   infile >> n;
 
-  // Resize vector to hold n particles
   particles.resize(n);
 
   for (int i = 0; i < n; i++)
@@ -244,43 +259,22 @@ double calcForceY(Particle *a, Particle *b)
   return -(G * a->mass * b->mass * dist_y) / pow(dist, 3);
 }
 
-void drawParticle2D(double x_window, double y_window,
-                    double radius,
-                    float *colors)
-{
-  int k = 0;
-  float angle = 0.0f;
-  glBegin(GL_TRIANGLE_FAN);
-  glColor3f(colors[0], colors[1], colors[2]);
-  glVertex2f(x_window, y_window);
-  for (k = 0; k < 20; k++)
-  {
-    angle = (float)(k) / 19 * 2 * 3.141592;
-    glVertex2f(x_window + radius * cos(angle),
-               y_window + radius * sin(angle));
-  }
-  glEnd();
-}
-
-// void drawOctreeBounds2D(Particle node)
+// void drawParticle2D(double x_window, double y_window,
+//                     double radius,
+//                     float *colors)
 // {
-//   int i;
-//   if (!node || node is external)
-//     return;
-//   glBegin(GL_LINES);
-//   // set the color of lines to be white
-//   glColor3f(1.0f, 1.0f, 1.0f);
-//   // specify the start point's coordinates
-//   glVertex2f(h_start_x, h_start_y);
-//   // specify the end point's coordinates
-//   glVertex2f(h_end_x, h_end_y);
-//   // do the same for verticle line
-//   glVertex2f(v_start_x, h_end_y);
-//   glVertex2f(v_end_x, v_end_y);
+//   int k = 0;
+//   float angle = 0.0f;
+//   glBegin(GL_TRIANGLE_FAN);
+//   glColor3f(colors[0], colors[1], colors[2]);
+//   glVertex2f(x_window, y_window);
+//   for (k = 0; k < 20; k++)
+//   {
+//     angle = (float)(k) / 19 * 2 * 3.141592;
+//     glVertex2f(x_window + radius * cos(angle),
+//                y_window + radius * sin(angle));
+//   }
 //   glEnd();
-//     for each
-//       subtree of node
-//           drawOctreeBounds2D(subtree);
 // }
 
 void insertNode(Node *node, Particle *particle)
@@ -436,7 +430,7 @@ void calculateCenters(Node *node)
     }
   }
 }
-void computeNaive(std::vector<Particle> &particles)
+void computeNaive(std::vector<Particle> &particles, double dt)
 {
   std::vector<Particle> next_particles = particles;
 
@@ -448,7 +442,6 @@ void computeNaive(std::vector<Particle> &particles)
     if (current_particle.mass < 0)
       continue;
 
-    // If it’s out of bounds, mark dead in *next_particles* and skip forces
     if (current_particle.x < 0 || current_particle.x > MAX_X ||
         current_particle.y < 0 || current_particle.y > MAX_Y)
     {
@@ -463,11 +456,9 @@ void computeNaive(std::vector<Particle> &particles)
     {
       const Particle &other = particles[j];
 
-      // Skip dead ones immediately
       if (other.mass < 0)
         continue;
 
-      // If other is out of bounds, mark it dead in *next_particles*
       if (other.x < 0 || other.x > MAX_X ||
           other.y < 0 || other.y > MAX_Y)
       {
@@ -512,11 +503,11 @@ static inline void addForce(
     double *fy)
 {
   double r2 = dx * dx + dy * dy;
-  double r = sqrt(r2);               // Calculate actual distance
-  double dist = std::max(rlimit, r); // Compare distance to distance
+  double r = sqrt(r2);
+  double dist = std::max(rlimit, r);
   double inv_r3 = 1.0 / (dist * dist * dist);
 
-  double F = G * m1 * m2 * inv_r3; // Don't forget the negative sign!
+  double F = G * m1 * m2 * inv_r3;
 
   *fx += F * dx;
   *fy += F * dy;
@@ -528,22 +519,28 @@ struct ParticleUpdate
 {
   double x;
   double y;
+  double vx;
+  double vy;
 };
 
 void create_particle_update_type()
 {
-  // Number of fields
-  const int nitems = 2;
+  const int nitems = 4;
 
-  int blocklengths[2] = {1, 1};
-  MPI_Datatype types[2] = {
+  int blocklengths[4] = {1, 1, 1, 1};
+  MPI_Datatype types[4] = {
       MPI_DOUBLE, // x
       MPI_DOUBLE, // y
+      MPI_DOUBLE, // vx
+      MPI_DOUBLE, // vy
+
   };
 
-  MPI_Aint offsets[2];
+  MPI_Aint offsets[4];
   offsets[0] = offsetof(ParticleUpdate, x);
   offsets[1] = offsetof(ParticleUpdate, y);
+  offsets[2] = offsetof(ParticleUpdate, vx);
+  offsets[3] = offsetof(ParticleUpdate, vy);
 
   MPI_Type_create_struct(nitems, blocklengths, offsets, types, &MPI_PARTICLE);
   MPI_Type_commit(&MPI_PARTICLE);
@@ -578,7 +575,6 @@ void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y
     return;
   }
 
-  // Pass theta2 down the recursion
   if (n->lower_left)
     calculateNodeForce(p, n->lower_left, total_x_f, total_y_f, theta2);
   if (n->lower_right)
@@ -588,20 +584,30 @@ void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y
   if (n->upper_right)
     calculateNodeForce(p, n->upper_right, total_x_f, total_y_f, theta2);
 }
-
-void computeBarnesHunt(std::vector<Particle> &particles)
+void deleteTree(Node *node)
 {
+  if (!node)
+    return;
+  deleteTree(node->lower_left);
+  deleteTree(node->lower_right);
+  deleteTree(node->upper_left);
+  deleteTree(node->upper_right);
+  delete node;
+}
+void computeBarnesHunt(std::vector<Particle> &particles, double dt, double theta)
+{
+  int world_rank, world_size;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
   // build the tree
   Node *root = new Node(0, MAX_X, 0, MAX_Y);
 
-  double horz_line = MAX_X / 2.0;
-  double vert_line = MAX_Y / 2.0;
-
   // seperate nodes into quadrants
   for (int i = 0; i < particles.size(); i++)
   {
-    if (particles[i].x < 0 || particles[i].x > MAX_X || particles[i].y < 0 || particles[i].y > MAX_Y)
+    if (particles[i].x < 0 || particles[i].x > MAX_X ||
+        particles[i].y < 0 || particles[i].y > MAX_Y)
     {
       particles[i].mass = -1;
       continue;
@@ -610,43 +616,36 @@ void computeBarnesHunt(std::vector<Particle> &particles)
   }
 
   // find center of mass for every tree node
-  // sum masses and add up x and y positions
   calculateCenters(root);
 
   std::vector<Particle> next_particles = particles;
 
-  // caclulate for force for every particle based on tree nodes
+  // calculate for force for every particle based on tree nodes
   const std::size_t n = particles.size();
   const double dt2 = dt * dt;
   const double half_dt2 = 0.5 * dt2;
   const double theta2 = theta * theta;
 
-  int world_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-  int world_size;
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-  // if i am the first one, I do work and coordinate
   int slice = (n + world_size - 1) / world_size;
-
   int start = slice * world_rank;
-  int end = slice * (world_rank + 1);
+  int end = std::min(slice * (world_rank + 1), (int)n);
 
   for (int i = start; i < end; i++)
   {
-    if (i >= n)
-      break;
-
-    if (particles[i].x < 0 || particles[i].x > MAX_X || particles[i].y < 0 || particles[i].y > MAX_Y)
+    if (particles[i].mass < 0 ||
+        particles[i].x < 0 || particles[i].x > MAX_X ||
+        particles[i].y < 0 || particles[i].y > MAX_Y)
     {
       continue;
     }
+
     const Particle &current_particle = particles[i];
 
     double force_x = 0;
     double force_y = 0;
 
     calculateNodeForce(&particles[i], root, &force_x, &force_y, theta2);
+
     double acc_x = force_x / current_particle.mass;
     double acc_y = force_y / current_particle.mass;
 
@@ -662,9 +661,6 @@ void computeBarnesHunt(std::vector<Particle> &particles)
     next_particles[i].vy = new_vy;
   }
 
-  // now lets collect what everyone else has done
-
-  // first one will recieve from all
   if (world_size > 1)
   {
     if (world_rank == 0)
@@ -672,12 +668,19 @@ void computeBarnesHunt(std::vector<Particle> &particles)
       for (int i = 1; i < world_size; i++)
       {
         std::vector<ParticleUpdate> particle_slice(slice);
-        MPI_Recv(particle_slice.data(), slice, MPI_PARTICLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(particle_slice.data(), slice, MPI_PARTICLE, i, 0,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         for (int j = 0; j < slice; j++)
         {
-          next_particles[j + i * slice].x = particle_slice[j].x;
-          next_particles[j + i * slice].y = particle_slice[j].y;
+          int idx = j + i * slice;
+          if (idx >= n)
+            break;
+
+          next_particles[idx].x = particle_slice[j].x;
+          next_particles[idx].y = particle_slice[j].y;
+          next_particles[idx].vx = particle_slice[j].vx;
+          next_particles[idx].vy = particle_slice[j].vy;
         }
       }
     }
@@ -687,48 +690,60 @@ void computeBarnesHunt(std::vector<Particle> &particles)
 
       for (int i = 0; i < slice; i++)
       {
-        particle_slice[i].x = next_particles[i + world_rank * slice].x;
-        particle_slice[i].y = next_particles[i + world_rank * slice].y;
+        int idx = i + world_rank * slice;
+        if (idx >= n)
+          break;
+
+        particle_slice[i].x = next_particles[idx].x;
+        particle_slice[i].y = next_particles[idx].y;
+        particle_slice[i].vx = next_particles[idx].vx;
+        particle_slice[i].vy = next_particles[idx].vy;
       }
 
       MPI_Send(particle_slice.data(), slice, MPI_PARTICLE, 0, 0, MPI_COMM_WORLD);
     }
-    // then first one will send to all if (world_rank == 0)
+
     if (world_rank == 0)
     {
+      std::vector<ParticleUpdate> all_updates(n);
+      for (int j = 0; j < n; j++)
+      {
+        all_updates[j].x = next_particles[j].x;
+        all_updates[j].y = next_particles[j].y;
+        all_updates[j].vx = next_particles[j].vx;
+        all_updates[j].vy = next_particles[j].vy;
+      }
+
       for (int i = 1; i < world_size; i++)
       {
-        std::vector<ParticleUpdate> particle_slice(n);
-        for (int j = 0; j < next_particles.size(); j++)
-        {
-          particle_slice[j].x = next_particles[j].x;
-          particle_slice[j].y = next_particles[j].y;
-        }
-
-        MPI_Send(particle_slice.data(), n, MPI_PARTICLE, i, 0, MPI_COMM_WORLD);
+        MPI_Send(all_updates.data(), n, MPI_PARTICLE, i, 0, MPI_COMM_WORLD);
       }
     }
     else
     {
-      std::vector<ParticleUpdate> particle_slice(n);
-      MPI_Recv(particle_slice.data(), n, MPI_PARTICLE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      for (int j = 0; j < next_particles.size(); j++)
+      std::vector<ParticleUpdate> all_updates(n);
+      MPI_Recv(all_updates.data(), n, MPI_PARTICLE, 0, 0,
+               MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      for (int j = 0; j < n; j++)
       {
-        next_particles[j].x = particle_slice[j].x;
-        next_particles[j].y = particle_slice[j].y;
+        next_particles[j].x = all_updates[j].x;
+        next_particles[j].y = all_updates[j].y;
+        next_particles[j].vx = all_updates[j].vx;
+        next_particles[j].vy = all_updates[j].vy;
       }
     }
-    // MPI_Bcast(next_particles.data(), n, MPI_PARTICLE, 0, MPI_COMM_WORLD);
   }
 
   particles = next_particles;
+  deleteTree(root);
 }
 
 int main(int argc, char **argv)
 {
   struct options_t opts;
   get_opts(argc, argv, &opts);
-  GLFWwindow *window;
+  // GLFWwindow *window;
   MPI_Init(NULL, NULL);
 
   create_particle_update_type();
@@ -740,32 +755,32 @@ int main(int argc, char **argv)
   int world_rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-  if (opts.visualization && world_rank == 0)
-  {
-    /* OpenGL window dims */
-    int width = 600, height = 600;
-    if (!glfwInit())
-    {
-      fprintf(stderr, "Failed to initialize GLFW\n");
-      return -1;
-    }
-    // Open a window and create its OpenGL context
-    window = glfwCreateWindow(width, height, "Simulation", NULL, NULL);
-    if (window == NULL)
-    {
-      fprintf(stderr, "Failed to open GLFW window.\n");
-      glfwTerminate();
-      return -1;
-    }
-    glfwMakeContextCurrent(window); // Initialize GLEW
-    if (glewInit() != GLEW_OK)
-    {
-      fprintf(stderr, "Failed to initialize GLEW\n");
-      return -1;
-    }
-    // Ensure we can capture the escape key being pressed below
-    glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
-  }
+  // if (opts.visualization && world_rank == 0)
+  // {
+  //   /* OpenGL window dims */
+  //   int width = 600, height = 600;
+  //   if (!glfwInit())
+  //   {
+  //     fprintf(stderr, "Failed to initialize GLFW\n");
+  //     return -1;
+  //   }
+  //   // Open a window and create its OpenGL context
+  //   window = glfwCreateWindow(width, height, "Simulation", NULL, NULL);
+  //   if (window == NULL)
+  //   {
+  //     fprintf(stderr, "Failed to open GLFW window.\n");
+  //     glfwTerminate();
+  //     return -1;
+  //   }
+  //   glfwMakeContextCurrent(window); // Initialize GLEW
+  //   if (glewInit() != GLEW_OK)
+  //   {
+  //     fprintf(stderr, "Failed to initialize GLEW\n");
+  //     return -1;
+  //   }
+  //   // Ensure we can capture the escape key being pressed below
+  //   glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
+  // }
 
   std::vector<Particle> particles;
   if (read_file(&opts, particles) != 0)
@@ -773,72 +788,46 @@ int main(int argc, char **argv)
     std::cerr << "Failed to read file\n";
   }
 
-  // Initialize the MPI environment. The two arguments to MPI Init are not
-  // currently used by MPI implementations, but are there in case future
-  // implementations might need the arguments.
-
-  // Get the name of the processor
-  char processor_name[MPI_MAX_PROCESSOR_NAME];
-  int name_len;
-  MPI_Get_processor_name(processor_name, &name_len);
-
-  // Print off a hello world message
-  printf("Hello world from processor %s, rank %d out of %d processors\n",
-         processor_name, world_rank, world_size);
-
-  // Finalize the MPI environment. No more MPI calls can be made after this
-
-  // testing most basic n * n implementation
-
-  // lets do for 100 time steps
-  auto total_start = std::chrono::high_resolution_clock::now();
+  double start = MPI_Wtime();
 
   for (int t = 0; t < opts.steps; t++)
   {
-    if (opts.visualization && world_rank == 0)
-    {
-      glClear(GL_COLOR_BUFFER_BIT);
+    // if (opts.visualization && world_rank == 0)
+    // {
+    //   glClear(GL_COLOR_BUFFER_BIT);
 
-      for (int p = 0; p < particles.size(); p++)
-      {
-        if (particles[p].mass < 0)
-          continue;
+    //   for (int p = 0; p < particles.size(); p++)
+    //   {
+    //     if (particles[p].mass < 0)
+    //       continue;
 
-        double x_window = 2 * particles[p].x / MAX_X - 1;
-        double y_window = 2 * particles[p].y / MAX_Y - 1;
+    //     double x_window = 2 * particles[p].x / MAX_X - 1;
+    //     double y_window = 2 * particles[p].y / MAX_Y - 1;
 
-        float colors[3] = {0.01f, 0.5f, 0.99f};
-        drawParticle2D(x_window, y_window, 0.01, colors);
-      }
+    //     float colors[3] = {0.01f, 0.5f, 0.99f};
+    //     drawParticle2D(x_window, y_window, 0.01, colors);
+    //   }
 
-      glfwSwapBuffers(window);
-      glfwPollEvents();
-    }
+    //   glfwSwapBuffers(window);
+    //   glfwPollEvents();
+    // }
 
-    computeBarnesHunt(particles);
+    computeBarnesHunt(particles, opts.timestep, opts.theta);
     // computeNaive(particles);
   }
+  double end = MPI_Wtime();
+  double elapsed = end - start;
 
-  auto total_end = std::chrono::high_resolution_clock::now();
+  if (world_rank == 0)
+  {
+    std::cout << elapsed << "\n";
+  }
 
-  // Convert to milliseconds
-  double total_ms =
-      std::chrono::duration<double, std::milli>(total_end - total_start).count();
+  if (opts.out_file && world_rank == 0)
+  {
+    write_file(opts.out_file, particles);
+  }
 
-  double avg_ms = total_ms / opts.steps;
-  double fps = 1000.0 / avg_ms;
-
-  std::cout << "Total time: " << total_ms << " ms\n";
-  std::cout << "Average per step: " << avg_ms << " ms\n";
-  std::cout << "FPS (sim speed): " << fps << "\n";
-
-  // std::cout << "final post\n";
-
-  // for (int i = 0; i < particles.size(); i++)
-  // {
-  //   std::cout << "p" << i << ": x=" << particles[i].x
-  //             << ", y=" << particles[i].y << "\n";
-  // }
   MPI_Type_free(&MPI_PARTICLE);
 
   MPI_Finalize();
