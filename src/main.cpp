@@ -522,6 +522,33 @@ static inline void addForce(
   *fy += F * dy;
 }
 
+MPI_Datatype MPI_PARTICLE;
+
+struct ParticleUpdate
+{
+  double x;
+  double y;
+};
+
+void create_particle_update_type()
+{
+  // Number of fields
+  const int nitems = 2;
+
+  int blocklengths[2] = {1, 1};
+  MPI_Datatype types[2] = {
+      MPI_DOUBLE, // x
+      MPI_DOUBLE, // y
+  };
+
+  MPI_Aint offsets[2];
+  offsets[0] = offsetof(ParticleUpdate, x);
+  offsets[1] = offsetof(ParticleUpdate, y);
+
+  MPI_Type_create_struct(nitems, blocklengths, offsets, types, &MPI_PARTICLE);
+  MPI_Type_commit(&MPI_PARTICLE);
+}
+
 void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y_f, double theta2)
 {
   if (n->total_mass < 0.0)
@@ -562,7 +589,6 @@ void calculateNodeForce(Particle *p, Node *n, double *total_x_f, double *total_y
     calculateNodeForce(p, n->upper_right, total_x_f, total_y_f, theta2);
 }
 
-
 void computeBarnesHunt(std::vector<Particle> &particles)
 {
 
@@ -594,8 +620,23 @@ void computeBarnesHunt(std::vector<Particle> &particles)
   const double dt2 = dt * dt;
   const double half_dt2 = 0.5 * dt2;
   const double theta2 = theta * theta;
-  for (int i = 0; i < n; i++)
+
+  int world_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+  // if i am the first one, I do work and coordinate
+  int slice = (n + world_size - 1) / world_size;
+
+  int start = slice * world_rank;
+  int end = slice * (world_rank + 1);
+
+  for (int i = start; i < end; i++)
   {
+    if (i >= n)
+      break;
+
     if (particles[i].x < 0 || particles[i].x > MAX_X || particles[i].y < 0 || particles[i].y > MAX_Y)
     {
       continue;
@@ -621,6 +662,65 @@ void computeBarnesHunt(std::vector<Particle> &particles)
     next_particles[i].vy = new_vy;
   }
 
+  // now lets collect what everyone else has done
+
+  // first one will recieve from all
+  if (world_size > 1)
+  {
+    if (world_rank == 0)
+    {
+      for (int i = 1; i < world_size; i++)
+      {
+        std::vector<ParticleUpdate> particle_slice(slice);
+        MPI_Recv(particle_slice.data(), slice, MPI_PARTICLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        for (int j = 0; j < slice; j++)
+        {
+          next_particles[j + i * slice].x = particle_slice[j].x;
+          next_particles[j + i * slice].y = particle_slice[j].y;
+        }
+      }
+    }
+    else
+    {
+      std::vector<ParticleUpdate> particle_slice(slice);
+
+      for (int i = 0; i < slice; i++)
+      {
+        particle_slice[i].x = next_particles[i + world_rank * slice].x;
+        particle_slice[i].y = next_particles[i + world_rank * slice].y;
+      }
+
+      MPI_Send(particle_slice.data(), slice, MPI_PARTICLE, 0, 0, MPI_COMM_WORLD);
+    }
+    // then first one will send to all if (world_rank == 0)
+    if (world_rank == 0)
+    {
+      for (int i = 1; i < world_size; i++)
+      {
+        std::vector<ParticleUpdate> particle_slice(n);
+        for (int j = 0; j < next_particles.size(); j++)
+        {
+          particle_slice[j].x = next_particles[j].x;
+          particle_slice[j].y = next_particles[j].y;
+        }
+
+        MPI_Send(particle_slice.data(), n, MPI_PARTICLE, i, 0, MPI_COMM_WORLD);
+      }
+    }
+    else
+    {
+      std::vector<ParticleUpdate> particle_slice(n);
+      MPI_Recv(particle_slice.data(), n, MPI_PARTICLE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      for (int j = 0; j < next_particles.size(); j++)
+      {
+        next_particles[j].x = particle_slice[j].x;
+        next_particles[j].y = particle_slice[j].y;
+      }
+    }
+    // MPI_Bcast(next_particles.data(), n, MPI_PARTICLE, 0, MPI_COMM_WORLD);
+  }
+
   particles = next_particles;
 }
 
@@ -629,8 +729,18 @@ int main(int argc, char **argv)
   struct options_t opts;
   get_opts(argc, argv, &opts);
   GLFWwindow *window;
+  MPI_Init(NULL, NULL);
 
-  if (opts.visualization)
+  create_particle_update_type();
+  // Get the number of processes
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+  // Get the rank of the process
+  int world_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+  if (opts.visualization && world_rank == 0)
   {
     /* OpenGL window dims */
     int width = 600, height = 600;
@@ -666,15 +776,6 @@ int main(int argc, char **argv)
   // Initialize the MPI environment. The two arguments to MPI Init are not
   // currently used by MPI implementations, but are there in case future
   // implementations might need the arguments.
-  MPI_Init(NULL, NULL);
-
-  // Get the number of processes
-  int world_size;
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-  // Get the rank of the process
-  int world_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
   // Get the name of the processor
   char processor_name[MPI_MAX_PROCESSOR_NAME];
@@ -694,7 +795,7 @@ int main(int argc, char **argv)
 
   for (int t = 0; t < opts.steps; t++)
   {
-    if (opts.visualization)
+    if (opts.visualization && world_rank == 0)
     {
       glClear(GL_COLOR_BUFFER_BIT);
 
@@ -738,6 +839,7 @@ int main(int argc, char **argv)
   //   std::cout << "p" << i << ": x=" << particles[i].x
   //             << ", y=" << particles[i].y << "\n";
   // }
+  MPI_Type_free(&MPI_PARTICLE);
 
   MPI_Finalize();
 }

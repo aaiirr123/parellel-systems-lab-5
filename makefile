@@ -1,7 +1,7 @@
 # MPI compiler and runner
 MPICC   ?= mpic++
 MPIEXEC ?= mpiexec
-NP      ?= 1   
+NP      ?= 4   
 
 # Paths
 SRC_DIR = src
@@ -34,7 +34,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 # Run with mpiexec
 run: $(TARGET)
-	$(MPIEXEC) -n $(NP) ./$(TARGET) -i ./inputs/nb-10000.txt -s 1
+	$(MPIEXEC) -n $(NP) ./$(TARGET) -i ./inputs/nb-100.txt -s 100000 -v true
 
 clean:
 	rm -rf $(OBJ_DIR) $(TARGET)
